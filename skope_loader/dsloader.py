@@ -95,6 +95,8 @@ def add_local_args(parser):
 
     parser.add_argument('src',
         help='name of the source dataset file (yaml or json)')
+    parser.add_argument('--force', default=False, action='store_true',
+        help='force dataset creation if final validation fails')
     parser.add_argument('--description-md', default='description.md', 
         metavar='FILE',
         help="the markdown file will update the dataset's title and "
@@ -105,16 +107,19 @@ def add_local_args(parser):
     parser.add_argument('--boundary', default='boundary.geojson', 
         metavar='FILE',
         help='the boundary geojson file (default=boundary.geojson)')
-    parser.add_argument('--overlays', default='overlays.json', metavar='FILE',   
+    parser.add_argument('--overlays', default='overlays.json', 
+        metavar='FILE',   
         help='overlay parameter file (default=overlays.json)')
-    parser.add_argument('--overlay-md', default='overlay.md', metavar='FILE',
+    parser.add_argument('--overlays-md', default='overlays.md', 
+        metavar='FILE',
         help='markdown description of the overlay service '
-             '(default=overlay.md)')
-    parser.add_argument('--downloads', default='downloads.json', metavar='FILE',
+             '(default=overlays.md)')
+    parser.add_argument('--downloads', default='downloads.json', 
+        metavar='FILE',
         help='download parameter file (default=downloads.json)')
-    parser.add_argument('--download-md', default='download.md', metavar='FILE',
+    parser.add_argument('--downloads-md', default='downloads.md', metavar='FILE',
         help='markdown description of the download service '
-             '(default=download.md)')
+             '(default=downloads.md)')
     parser.add_argument('--analytics', default='analytics.json', 
         metavar='FILE',
         help='analytics parameter file (default=analytics.json)')
@@ -133,7 +138,7 @@ def add_local_args(parser):
     parser.add_argument('--noaa', default=False, action='store_true',
         help='the source dataset file is a NOAA metadata file')
     parser.add_argument('--debug',
-        default = logging.INFO, action='store_const', const=logging.DEBUG,
+        default = logging.WARN, action='store_const', const=logging.DEBUG,
         help='one or more urls pointing to a metadata download')
 
 
@@ -159,6 +164,7 @@ def update_description(doc, path, fname):
  
     doc['description'] = unicode(''.join(md[idx:]), 'utf-8')
 
+
 def update_parameters(doc, service, path, fname):
 
     filepath = os.path.join(path, fname)
@@ -173,12 +179,17 @@ def update_parameters(doc, service, path, fname):
 
 def update_markdown(doc, service, path, fname):
 
+    log.debug('adding md file %s for service %s', fname, service)
+    doc.setdefault(service, {})
     filepath = os.path.join(path, fname)
-    if not os.path.isfile(filepath):
-        return
 
-    with open(filepath) as f:
-        doc.setdefault(service, {})['markdown'] = unicode(f.read(), 'utf-8')
+    if os.path.isfile(filepath):
+        with open(filepath) as f:
+            doc[service]['markdown'] = unicode(f.read(), 'utf-8')
+
+    elif doc[service].get('markdown', ''):
+        log.debug('%s - file %s not found.', filepath)
+        doc.setdefault(service, {})['markdown'] = unicode('', 'utf-8')
 
 
 def generate_boundary(extents):
@@ -193,7 +204,7 @@ def generate_boundary(extents):
     ]])
 
 
-def read_boundary(filepath)
+def read_boundary(filepath):
 
     with open(filepath) as f:
         geojson = f.read()
@@ -265,10 +276,10 @@ def main():
     update_markdown(doc, 'information', path, args.info_md)
 
     update_parameters(doc, 'overlays', path, args.overlays)
-    update_markdown(doc, 'overlayService', path, args.overlay_md)
+    update_markdown(doc, 'overlayService', path, args.overlays_md)
 
     update_parameters(doc, 'downloads', path, args.downloads)
-    update_markdown(doc, 'downloadService', path, args.download_md)
+    update_markdown(doc, 'downloadService', path, args.downloads_md)
 
     update_parameters(doc, 'analytics', path, args.analytics)
     update_markdown(doc, 'analyticService', path, args.analytics_md)
