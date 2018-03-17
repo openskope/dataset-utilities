@@ -15,6 +15,7 @@ import json
 import requests
 from argparse import ArgumentParser
 from geojson import Polygon
+from slugify import slugify
 
 from es_wrap import *
 from noaa import *
@@ -226,10 +227,38 @@ def update_boundary(doc, path, fname):
         doc['region']['geometry'] = generate_boundary(doc['region']['extents'])
 
 
+def normalize_variables(doc):
+    """Add unique shortname and handle deprecated 'name' attribute."""
+
+    for v in doc['variables']:
+        title = v.get('title', '')
+        if not title: 
+            title = v.get('name', '')
+            if not title:
+                log.error('dataset variables missing title attribute')
+                sys.exit(1)
+            log.warn("use of variable attribute 'name' is deprecated")
+
+        v['title'] = title
+        v['shortname'] = slugify(title)
+
+        # TODO remove sometime in the future
+        v['name'] = title
+
+
+def get_variables(doc, title=False):
+    """Return the list of variables from the document."""
+
+    if title:
+        return [v['title'] for v in doc['variables']]
+    else:
+        return [v['shortname']
+
+
 def append_variables(doc):
     """Append the list of variables to the dataset description."""
     
-    variables = ', '.join([ v['name'] for v in doc['variables'] ])
+    variables = ', '.join([ v['title'] for v in doc['variables'] ])
     markdown = '\n'.join(['', '### Variables', variables ])
     doc['description'] = doc.get('description', unicode('', 'utf-8')) + markdown
 
@@ -268,10 +297,12 @@ def main():
         with open(args.src) as f:
             doc = json.load(f)
 
-    path, _ = os.path.split(args.src)
+    normalize_variables(doc)
 
+    path, _ = os.path.split(args.src)
     update_description(doc, path, args.description_md)
     append_variables(doc)
+
     update_boundary(doc, path, args.boundary)
     update_markdown(doc, 'information', path, args.info_md)
 
