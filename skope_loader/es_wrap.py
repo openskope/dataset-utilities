@@ -1,6 +1,6 @@
 import os
 from furl import furl
-from elasticsearch import Elasticsearch
+from elasticsearch import Elasticsearch, RequestError, NotFoundError
 
 import logging
 log = logging.getLogger(__name__)
