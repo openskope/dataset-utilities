@@ -1,6 +1,12 @@
 """ SKOPE index builder
 
-Provides a CLI to manage the ElasticSearch index.
+Provides a CLI to manage the ElasticSearch index and mapping. This tool
+uses Elasticsearch's concept of aiases to allow a single name to reference
+different indices over time. Client code should always access the alias
+rather than the actual index name.
+
+The tool can also reindex all documents from an existing index. This allows
+older documents to be moved forward to the new mapping.
 """
 import os
 import sys
@@ -32,30 +38,41 @@ def main():
     args = parser.parse_args()
 
     log = logging.getLogger(os.path.basename(sys.argv[0]))
-    logging.basicConfig(level=args.debug)
+    handler = logging.StreamHandler()
+    formatter = logging.Formatter(
+            '%(levelname)s: %(name)s: %(message)s')
+    handler.setFormatter(formatter)
+    log.addHandler(handler)
+    log.setLevel(level=args.debug)
 
     es = config_elasticsearch(args.es_url)
+
     if args.force:
+        log.debug('deleting index %s', args.es_index)
         es.indices.delete(index=args.es_index, ignore=[400, 404])
 
     try:
         with open(args.mapping) as mapping:
             log.debug('creating index %s', args.es_index)
-            es.indices.create(index=args.es_index, body=mapping.read())
+            es.indices.create(index=args.es_index, body=mapping.read(), 
+                              request_timeout=60.0)
+            log.debug('index %s created', args.es_index)
 
     except IOError as e:
         log.error('Unble to open mapping file %s', args.mapping)
         sys.exit(1)
 
     except RequestError as e:
-        log.error('index %s already exists, use --force option')
+        log.error('index %s already exists, use --force option', args.es_index)
         sys.exit(1)
 
     if args.reindex:
+        log.debug('reindexing from %s', args.reindex)
         try:
             body = dict(source={"index": args.reindex}, 
                         dest={"index": args.es_index})
-            es.reindex(body=body)
+            es.reindex(body=body, request_timeout=60.0)
+            log.debug('reindexing complete')
 
         except NotFoundError as e:
             log.error('source index %s not found', args.reindex)

@@ -7,8 +7,8 @@ setup(
     zip_safe=True,
 
     install_requires=[
-        "python-slugify",
         "elasticsearch>=6.0.0,<7.0.0",
+        "awesome-slugify>=1.6.0,<2.0.0",
         "furl",
         "geojson",
         "nodeenv",
