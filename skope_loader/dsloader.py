@@ -110,9 +110,11 @@ def add_local_args(parser):
 
     parser.add_argument('src',
         help='name of the source dataset file (yaml or json)')
+    parser.add_argument('--preserve', default=False, action='store_true',
+            help='do no delete pre-existing ES dataset when re-indexing')
     parser.add_argument('--force', default=False, action='store_true',
         help='force dataset creation if final validation fails')
-    parser.add_argument('--addvars', default=True, 
+    parser.add_argument('--novars', default=False, action='store_true',
         help='append variable list to end of dataset description')
     parser.add_argument('--debug',
         default = logging.WARN, action='store_const', const=logging.DEBUG,
@@ -307,25 +309,33 @@ def get_variables(doc, title=False):
 def append_variables(doc):
     """Append the list of variables to the dataset description."""
     
-    variables = ', '.join([ '%s (%s)' % (v['title'], v['class']) for v in doc['variables'] ])
-    markdown = '\n'.join(['', '**Variables:** ', variables ])
-    doc['description'] = doc.get('description', unicode('', 'utf-8')) + markdown
+    variables = ', '.join([ '%s (%s)' % (v['title'], v['class']) \
+            for v in doc['variables'] ])
+    markdown = '\n**Variables:** ' + variables
+    doc['description'] = doc.get('description', unicode('', 'utf-8')) \
+            + markdown
 
 
 #TODO
 def validate_dataset(doc):
     """Check the document for errors and mistakes."""
 
-    print json.dumps(doc)
+    log.debug(json.dumps(doc))
     return True
 
 
-def save_dataset_id(path, dataset_id):
-    """Save the Elasticsearch _id in dataset directory."""
+def update_dataset_id(es, results, path, preserve=False):
+    """Delete existing document and update document id."""
 
     filepath = os.path.join(path, 'ID')
+
+    if not preserve and os.path.exists(filepath):
+        with open(filepath) as f:
+            _id = f.read().strip()
+        es.delete(index=results['_index'], doc_type=results['_type'], id=_id)
+
     with open(filepath, 'w') as f:
-        f.write(dataset_id)
+        f.write(results['_id'])
 
 
 def main():
@@ -348,9 +358,8 @@ def main():
         with open(args.src) as f:
             doc = json.load(f)
 
+    # path is used to locating supporting metadata files
     path, fname = os.path.split(args.src)
-    if not doc.get('title', ''):
-        doc['title'] = fname
 
     update_description(doc, path, args.description_md)
     doc['skopeid'] = skopeid(doc['title'])
@@ -377,8 +386,11 @@ def main():
 
     if args.force or validate_dataset(doc):
         es = config_elasticsearch(args.es_url)
+
         res = es.index(index=args.es_index, doc_type='dataset', body=doc)
-        save_dataset_id(path, res['_id'])
+        if res['_shards']['successful'] > 0:
+            update_dataset_id(es, res, path, preserve=args.preserve)
+
     else:
         sys.exit(1) 
 
