@@ -15,7 +15,7 @@ import json
 import requests
 from argparse import ArgumentParser
 from geojson import Polygon
-from slugify import slugify
+from slugify import slugify, UniqueSlugify
 
 from es_wrap import *
 from noaa import *
@@ -24,16 +24,54 @@ import logging
 log = logging.getLogger('dsloader')
 
 
-def new_overlay(**kwargs):
+def new_overlays(**kwargs):
+    """Set default values with overrides for keyword args."""
 
     new = dict(
+        title=unicode('', 'utf-8'),
         name=unicode('', 'utf-8'),
+        shortname=unicode('', 'utf-8'),
         description=unicode('', 'utf-8'),
+
         url=unicode('', 'utf-8'),
         type=unicode('wms', 'utf-8'),
         styles=[unicode('default', 'utf-8')],
         min=0,
         max=0,
+    )
+
+    new.update(kwargs)
+    return new
+
+
+def new_analytics(**kwargs):
+    """Set default values with overrides for keyword args."""
+
+    new = dict(
+        title=unicode('', 'utf-8'),
+        name=unicode('', 'utf-8'),
+        shortname=unicode('', 'utf-8'),
+        description=unicode('', 'utf-8'),
+
+        url=unicode('', 'utf-8'),
+    )
+
+    new.update(kwargs)
+    return new
+
+
+def new_downloads(**kwargs):
+    """Set default values with overrides for keyword args."""
+
+    new = dict(
+        title=unicode('', 'utf-8'),
+        name=unicode('', 'utf-8'),
+        shortname=unicode('', 'utf-8'),
+        description=unicode('', 'utf-8'),
+
+        url=unicode('', 'utf-8'),
+        formats=unicode('', 'utf-8'),
+        size=0,
     )
 
     new.update(kwargs)
@@ -52,30 +90,6 @@ def new_model(**kwargs):
     return new
 
 
-def new_download(**kwargs):
-    new = dict(
-        name=unicode('', 'utf-8'),
-        description=unicode('', 'utf-8'),
-        formats=unicode('', 'utf-8'),
-        url=unicode('', 'utf-8'),
-        size=0,
-    )
-
-    new.update(kwargs)
-    return new
-
-
-def new_analytics(**kwargs):
-    new = dict(
-        name=unicode('', 'utf-8'),
-        description=unicode('', 'utf-8'),
-        url=unicode('', 'utf-8'),
-    )
-
-    new.update(kwargs)
-    return new
-
-
 def new_metadata(markdown='', link='', description='', url=''):
     new = dict(
         markdown=unicode('', 'utf-8'),
@@ -88,8 +102,8 @@ def new_metadata(markdown='', link='', description='', url=''):
     return new
 
 
-SERVICES = dict(overlays=new_overlay, model=new_model, 
-                downloads=new_download, analytics=new_analytics)
+SERVICES = dict(overlays=new_overlays, model=new_model, 
+                downloads=new_downloads, analytics=new_analytics)
 
 
 def add_local_args(parser):
@@ -98,13 +112,20 @@ def add_local_args(parser):
         help='name of the source dataset file (yaml or json)')
     parser.add_argument('--force', default=False, action='store_true',
         help='force dataset creation if final validation fails')
+    parser.add_argument('--addvars', default=True, 
+        help='append variable list to end of dataset description')
+    parser.add_argument('--debug',
+        default = logging.WARN, action='store_const', const=logging.DEBUG,
+        help='one or more urls pointing to a metadata download')
+
+    # standard file names used in loading dataset
     parser.add_argument('--description-md', default='description.md', 
         metavar='FILE',
         help="the markdown file will update the dataset's title and "
              "description fields (default=description.md)")
-    parser.add_argument('--info-md', default='info.md', metavar='FILE',
+    parser.add_argument('--info-md', default='information.md', metavar='FILE',
         help="the markdown file will update the dataset's information "
-             "field (default=info.md)")
+             "field (default=information.md)")
     parser.add_argument('--boundary', default='boundary.geojson', 
         metavar='FILE',
         help='the boundary geojson file (default=boundary.geojson)')
@@ -118,7 +139,8 @@ def add_local_args(parser):
     parser.add_argument('--downloads', default='downloads.json', 
         metavar='FILE',
         help='download parameter file (default=downloads.json)')
-    parser.add_argument('--downloads-md', default='downloads.md', metavar='FILE',
+    parser.add_argument('--downloads-md', default='downloads.md', 
+        metavar='FILE',
         help='markdown description of the download service '
              '(default=downloads.md)')
     parser.add_argument('--analytics', default='analytics.json', 
@@ -138,9 +160,6 @@ def add_local_args(parser):
         help='markdown description of the model service (default=model.md)')
     parser.add_argument('--noaa', default=False, action='store_true',
         help='the source dataset file is a NOAA metadata file')
-    parser.add_argument('--debug',
-        default = logging.WARN, action='store_const', const=logging.DEBUG,
-        help='one or more urls pointing to a metadata download')
 
 
 def update_description(doc, path, fname):
@@ -168,14 +187,41 @@ def update_description(doc, path, fname):
 
 def update_parameters(doc, service, path, fname):
 
+    shortnames = { v['title']:v['shortname'] for v in doc['variables']}
+
     filepath = os.path.join(path, fname)
     if not os.path.isfile(filepath):
         return
 
     with open(filepath) as f:
-         overlays = json.load(f)[service]
-    
-    doc[service] = [SERVICES[service](**o) for o in overlays]
+          parameters = json.load(f)[service]
+
+
+    for idx, p in enumerate(parameters):
+
+        # TODO name is deprecated, remove at some point
+        if not p.get('title', '') and p.get('name', ''):
+            log.warn("use of variable attribute 'name' in %s is deprecated",
+                     fname)
+            p['title'] = p['name']
+
+        if not p.get('title', ''):
+            log.error('missing title in %s[%d]', service, idx)
+            sys.exit(1)
+
+        if p.get('title') not in shortnames.keys():
+            log.error('service %s variable %s not found in dataset variables',
+                       service, p.get('title'))
+            sys.exit(1)
+
+        p['shortname'] = shortnames[p.get('title')]
+
+        if not p.get('description', ''):
+            p['description'] = 'dataset {} variable {}'.format(doc['title'],
+                    p['title'])
+        
+    # update service specific values
+    doc[service] = [SERVICES[service](**p) for p in parameters]
 
 
 def update_markdown(doc, service, path, fname):
@@ -194,6 +240,7 @@ def update_markdown(doc, service, path, fname):
 
 
 def generate_boundary(extents):
+    """Create boundary geometry based on extents."""
 
     left, bottom, right, top = extents
     return Polygon([[
@@ -206,6 +253,7 @@ def generate_boundary(extents):
 
 
 def read_boundary(filepath):
+    """Read geojson boundary and return geometry."""
 
     with open(filepath) as f:
         geojson = f.read()
@@ -222,11 +270,14 @@ def update_boundary(doc, path, fname):
 
     filepath = os.path.join(path, fname)
     if os.path.isfile(filepath):
-        read_boundary(filepath)
-    else:
+        doc['region']['geometry'] = read_boundary(filepath)
+    elif doc['region'].get('extents', ''):
         doc['region']['geometry'] = generate_boundary(doc['region']['extents'])
+    else:
+        log.warn('geometry not set - missing boundary file and extents')
 
 
+# TODO 'name' is deprecated, remove in the future
 def normalize_variables(doc):
     """Add unique shortname and handle deprecated 'name' attribute."""
 
@@ -240,26 +291,24 @@ def normalize_variables(doc):
             log.warn("use of variable attribute 'name' is deprecated")
 
         v['title'] = title
-        v['shortname'] = slugify(title)
-
-        # TODO remove sometime in the future
-        v['name'] = title
+        v['shortname'] = slugify(title, to_lower=True)
+        if not v.get('description', ''):
+            v['description'] = '{} of dataset {}'.format(v['title'], 
+                                                         doc['title'])
 
 
 def get_variables(doc, title=False):
     """Return the list of variables from the document."""
 
-    if title:
-        return [v['title'] for v in doc['variables']]
-    else:
-        return [v['shortname']
+    field = 'shortname' if title==false else 'title'
+    return [v[field] for v in doc['variables']]
 
 
 def append_variables(doc):
     """Append the list of variables to the dataset description."""
     
-    variables = ', '.join([ v['title'] for v in doc['variables'] ])
-    markdown = '\n'.join(['', '### Variables', variables ])
+    variables = ', '.join([ '%s (%s)' % (v['title'], v['class']) for v in doc['variables'] ])
+    markdown = '\n'.join(['', '**Variables:** ', variables ])
     doc['description'] = doc.get('description', unicode('', 'utf-8')) + markdown
 
 
@@ -288,6 +337,8 @@ def main():
 
     logging.basicConfig(level=args.debug)
 
+    skopeid = UniqueSlugify(to_lower=True)
+
     if args.noaa:
         doc = dict(type='dataset')
         noaa = NOAA(args.src)
@@ -297,11 +348,15 @@ def main():
         with open(args.src) as f:
             doc = json.load(f)
 
-    normalize_variables(doc)
+    path, fname = os.path.split(args.src)
+    if not doc.get('title', ''):
+        doc['title'] = fname
 
-    path, _ = os.path.split(args.src)
     update_description(doc, path, args.description_md)
-    append_variables(doc)
+    doc['skopeid'] = skopeid(doc['title'])
+    normalize_variables(doc)
+    if args.addvars:
+        append_variables(doc)
 
     update_boundary(doc, path, args.boundary)
     update_markdown(doc, 'information', path, args.info_md)
