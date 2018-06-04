@@ -10,7 +10,8 @@ def config_elasticsearch(url):
     """Parse url and return Elasticsearch client."""
     f = furl(url)
     prefix = '/'.join(f.path.segments)
-    host = dict(host=f.host, port=f.port, url_prefix=prefix, use_ssl=False)
+    host = dict(scheme=f.scheme, host=f.host, port=f.port, 
+            url_prefix=prefix, use_ssl=False)
     log.debug('ES parse host=%s, prefix=%s', f.host, prefix)
     return Elasticsearch([host])
 
