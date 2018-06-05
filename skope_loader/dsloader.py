@@ -117,8 +117,11 @@ def add_local_args(parser):
     parser.add_argument('--novars', default=False, action='store_true',
         help='append variable list to end of dataset description')
     parser.add_argument('--debug',
-        default = logging.WARN, action='store_const', const=logging.DEBUG,
-        help='one or more urls pointing to a metadata download')
+        default=logging.WARN, action='store_const', const=logging.DEBUG,
+        help='enable debugging output')
+    parser.add_argument('--verbose', '-v',
+            default=False, action='store_const', const=True,
+            help='print the document after successful load')
 
     # standard file names used in loading dataset
     parser.add_argument('--description-md', default='description.md', 
@@ -164,6 +167,34 @@ def add_local_args(parser):
         help='the source dataset file is a NOAA metadata file')
 
 
+def add_skope_args(parser):
+    """SKOPE spectific variables used to complete strings with templates."""
+
+    parser.add_argument('--skope-deploy-host', 
+        default=os.environ.get('SKOPE_DEPLOY_HOST', 'http://localhost'),
+        help='template variable automatically applied to json parameter files')
+    parser.add_argument('--skope-yyyy', 
+            default=os.environ.get('SKOPE_YYYY', '{YYYY}'),
+            help='temporal variable used for years (completed by webapp)')
+    parser.add_argument('--skope-mm', 
+            default=os.environ.get('SKOPE_MM', '{MM}'),
+            help='temporal variable used for months (completed by webapp)')
+    parser.add_argument('--skope-yyyy-mm', 
+            default=os.environ.get('SKOPE_YYYY_MM', '{YYYY-MM}'),
+            help='temporal variable used for year-month (completed by webapp)')
+
+
+def get_skope_args(args):
+    """Extract SKOPE specific variables from argparse namespace."""
+
+    d = {k.replace('skope_','').upper(): v for (k, v) in vars(args).items() \
+            if k.startswith('skope_')}
+    d.update(dict(start='{start}', end='{end}', 
+            boundaryGeometry='{boundaryGeometry}'))
+    log.debug('template variables = %s', str(d))
+    return d
+
+
 def update_description(doc, path, fname):
 
     filepath = os.path.join(path, fname)
@@ -187,7 +218,16 @@ def update_description(doc, path, fname):
     doc['description'] = unicode(''.join(md[idx:]), 'utf-8')
 
 
-def update_parameters(doc, service, path, fname):
+def update_parameters(doc, service, path, fname, varstrings):
+    """Read service parameter file and integrate into document.
+
+    Args:
+      doc (dict): dataset document
+      service (str): service being parsed
+      path (str): base path for parameter file
+      fname (str): filename of parameter file
+      varstrings (dict): variable substitution strings applied to parameters
+    """
 
     shortnames = { v['title']:v['shortname'] for v in doc['variables']}
 
@@ -196,8 +236,9 @@ def update_parameters(doc, service, path, fname):
         return
 
     with open(filepath) as f:
+          #s = f.read().format(**kwargs)
+          #parameters = json.loads(s)[service]
           parameters = json.load(f)[service]
-
 
     for idx, p in enumerate(parameters):
 
@@ -218,9 +259,12 @@ def update_parameters(doc, service, path, fname):
 
         p['shortname'] = shortnames[p.get('title')]
 
+        if 'url' in p.keys():
+            p['url'] = p['url'].format(**varstrings)
+
         if not p.get('description', ''):
             p['description'] = 'dataset {} variable {}'.format(doc['title'],
-                    p['title'])
+                    p['title'].encode('utf-8'))
         
     # update service specific values
     doc[service] = [SERVICES[service](**p) for p in parameters]
@@ -294,9 +338,9 @@ def normalize_variables(doc):
 
         v['title'] = title
         v['shortname'] = slugify(title, to_lower=True)
-        if not v.get('description', ''):
-            v['description'] = '{} of dataset {}'.format(v['title'], 
-                                                         doc['title'])
+        #if not v.get('description', ''):
+        #    v['description'] = '{} of dataset {}'.format(v['title'], 
+        #                                                 doc['title'])
 
 
 def get_variables(doc, title=False):
@@ -320,7 +364,6 @@ def append_variables(doc):
 def validate_dataset(doc):
     """Check the document for errors and mistakes."""
 
-    log.debug(json.dumps(doc))
     return True
 
 
@@ -343,9 +386,12 @@ def main():
     parser = ArgumentParser()
     add_local_args(parser)
     add_elasticsearch_args(parser)
+    add_skope_args(parser)
     args = parser.parse_args()
 
     logging.basicConfig(level=args.debug)
+
+    template_vars = get_skope_args(args)
 
     skopeid = UniqueSlugify(to_lower=True)
 
@@ -364,22 +410,22 @@ def main():
     update_description(doc, path, args.description_md)
     doc['skopeid'] = skopeid(doc['title'])
     normalize_variables(doc)
-    if args.addvars:
+    if not args.novars:
         append_variables(doc)
 
     update_boundary(doc, path, args.boundary)
     update_markdown(doc, 'information', path, args.info_md)
 
-    update_parameters(doc, 'overlays', path, args.overlays)
+    update_parameters(doc, 'overlays', path, args.overlays, template_vars)
     update_markdown(doc, 'overlayService', path, args.overlays_md)
 
-    update_parameters(doc, 'downloads', path, args.downloads)
+    update_parameters(doc, 'downloads', path, args.downloads, template_vars)
     update_markdown(doc, 'downloadService', path, args.downloads_md)
 
-    update_parameters(doc, 'analytics', path, args.analytics)
+    update_parameters(doc, 'analytics', path, args.analytics, template_vars)
     update_markdown(doc, 'analyticService', path, args.analytics_md)
 
-    update_parameters(doc, 'model', path, args.model)
+    update_parameters(doc, 'model', path, args.model, template_vars)
     update_markdown(doc, 'modelService', path, args.model_md)
 
     update_markdown(doc, 'provenanceService', path, args.provenance_md)
@@ -390,6 +436,8 @@ def main():
         res = es.index(index=args.es_index, doc_type='dataset', body=doc)
         if res['_shards']['successful'] > 0:
             update_dataset_id(es, res, path, preserve=args.preserve)
+            if args.verbose:
+                sys.stdout.write(json.dumps(doc)+'\n')
 
     else:
         sys.exit(1) 
