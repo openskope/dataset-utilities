@@ -31,7 +31,6 @@ def add_local_arguments(parser):
 
 
 def main():
-
     parser = argparse.ArgumentParser(description=__doc__)
     add_local_arguments(parser)
     add_elasticsearch_args(parser)
@@ -82,4 +81,7 @@ def main():
         log.debug('applying alias %s to index', args.alias)
         es.indices.delete_alias(index=['_all'], name=args.alias, ignore=[404])
         es.indices.put_alias(index=args.es_index, name=args.alias)
+
+if __name__ == '__main__':
+    main()
 
